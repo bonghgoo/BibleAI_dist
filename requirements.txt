@@ -1,0 +1,10 @@
+streamlit
+ollama
+groq
+pymupdf
+python-docx
+beautifulsoup4
+ebooklib
+pandas
+lxml
+pyperclip
