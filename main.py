@@ -1,5 +1,6 @@
 # main.py
-# BibleAI v281.36.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'
+# BibleAI v281.36.경인노회
+
 
 
 
@@ -32,7 +33,7 @@ import shutil
 import pyperclip  # 클립보드 복사를 위한 모듈
 import tempfile
 import webbrowser
-client = Groq(api_key="")  # ← 여기에 본인의 Groq API 키를 입력하세요
+client = Groq(api_key="12345")
 
 from datetime import datetime
 from collections import defaultdict
@@ -590,7 +591,7 @@ def search_files_advanced(query, selected_folders=None, include_extensions=None)
     return results
 
 # --- [1. 시스템 설정 및 세션 초기화] ---
-st.set_page_config(page_title="Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'", layout="wide")
+st.set_page_config(page_title="경인노회", layout="wide")
 
 # --- [조립용 함수: 설정값들을 텍스트로 합침] ---
 def get_custom_prompt(context_data):
@@ -965,7 +966,7 @@ def get_lexicon(code):
 
 # --- [5. UI 레이아웃] ---
 with st.sidebar:
-    st.title("🎂 v281.36.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'")
+    st.title("🎂 v281.36.경인노회")
 
     # 수정된 폴더 정렬 로직
     def sort_folders(folders):
@@ -1136,7 +1137,7 @@ with st.sidebar:
 col_l, col_r = st.columns([0.45, 0.55])
 
 with col_l:
-    st.title("⚔️Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'")
+    st.title("⚔️경인노회")
     t1, t2, t3 = st.tabs(["📖 보화 찾기", "📁 서재 관리", "📝 프롬프트"])
 
     with t1:
