@@ -1,6 +1,5 @@
 # main.py
-# BibleAI v281.36.경인노회
-
+# BibleAI v281.36.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'
 
 
 
@@ -33,7 +32,7 @@ import shutil
 import pyperclip  # 클립보드 복사를 위한 모듈
 import tempfile
 import webbrowser
-client = Groq(api_key="12345")
+client = Groq(api_key="")  # ← 여기에 본인의 Groq API 키를 입력하세요
 
 from datetime import datetime
 from collections import defaultdict
@@ -591,7 +590,7 @@ def search_files_advanced(query, selected_folders=None, include_extensions=None)
     return results
 
 # --- [1. 시스템 설정 및 세션 초기화] ---
-st.set_page_config(page_title="경인노회", layout="wide")
+st.set_page_config(page_title="Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'", layout="wide")
 
 # --- [조립용 함수: 설정값들을 텍스트로 합침] ---
 def get_custom_prompt(context_data):
@@ -966,7 +965,7 @@ def get_lexicon(code):
 
 # --- [5. UI 레이아웃] ---
 with st.sidebar:
-    st.title("🎂 v281.36.경인노회")
+    st.title("🎂 v281.36.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'")
 
     # 수정된 폴더 정렬 로직
     def sort_folders(folders):
@@ -1137,7 +1136,7 @@ with st.sidebar:
 col_l, col_r = st.columns([0.45, 0.55])
 
 with col_l:
-    st.title("⚔️경인노회")
+    st.title("⚔️Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'")
     t1, t2, t3 = st.tabs(["📖 보화 찾기", "📁 서재 관리", "📝 프롬프트"])
 
     with t1:
@@ -1376,6 +1375,7 @@ with col_l:
             for res in st.session_state.scan_res:
                 st.session_state.basket.append(res)
             st.toast(f"모든 결과 {len(st.session_state.scan_res)}개를 바구니에 담았습니다!")
+            st.rerun()  # [버그수정] 바구니 숫자 즉시 갱신
 
     for i, res in enumerate(st.session_state.scan_res):
         cb, ca, cc, cd = st.columns([2.5, 1, 1, 1])
@@ -1389,7 +1389,10 @@ with col_l:
                     st.session_state.v_content = f"#### 📄 [{res['file']}]\n{bible_ref}\n{content_lines[1]}"
                 else:
                     st.session_state.v_content = f"#### 📄 [{res['file']}]\n{res['content']}"
-        if ca.button("🧺", key=f"ad_{i}"): st.session_state.basket.append(res); st.toast("바구니 저장!")
+        if ca.button("🧺", key=f"ad_{i}"):
+            st.session_state.basket.append(res)
+            st.toast("바구니 저장!")
+            st.rerun()  # [버그수정] 바구니 숫자 즉시 갱신
 
         # 카드형 보기 버튼 수정 - 별도 창으로 열기
         if cc.button("🔍", key=f"win_{i}"):
