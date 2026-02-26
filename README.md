@@ -33,7 +33,6 @@ BibleAI는 복잡한 성경 주석과 원어 사전을 AI 기술로 통합하여
 
 ## 🔗 관련 링크
 * [설치 가이드 블로그](https://bonghgoo.tistory.com/569)
-* [BibleAI 웹 데모 체험하기](https://bibleai-demo.streamlit.app/)
 
 ---
 **Developed by 경인노회 신학연구원 BibleAI 개발팀**
