@@ -1,7 +1,5 @@
 # main.py
-# BibleAI v281.36.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'
-
-
+# BibleAI v281.38.Ωραία Εκκλησία (Orea Ekklisia) '아름다운교회'
 
 # 수정사항:
 # - [개선] 검색어 간격 20자로 축소 + 어구 검색 기능 추가 (정규식 기반)
@@ -14,6 +12,8 @@
 # - [추가] 사이드바 프리셋 기본 접힘 상태로 시작
 # - [개선] 크로스 플랫폼 호환성 향상
 # - [FIXED] 6가지 사전 형식 모두 올바르게 표시되도록 수정
+# - [FIXED] 막대바 담기 버튼, 담아줘 명령 후 바구니 오류 수정,  클로드 픽스 재수정 버전 
+# - 2026-02-28 블로그 최종 배포본
 
 import streamlit as st
 import ollama
@@ -112,153 +112,119 @@ def get_dictionary_index_samples(db_path, index_column, limit=20):
         return []
 
 # ===================================================================
-# ★★★ 핵심 수정: 사전 검색 및 텍스트 정제 함수 (6가지 형식 모두 지원) ★★★
+# ★★★ 핵심 수정: 사전 검색 및 텍스트 정제 함수 (전면 재작성) ★★★
+# 수정 이유:
+#   - 기존 clean_lexicon_text_advanced()는 RTF \u 명령어를 삭제 후
+#     16진수로 재해석하는 이중 오류로 한글·헬라어·히브리어가 깨짐
+#   - BeautifulSoup str(soup) 변환 시 <br></p> 등 태그가 그대로 노출됨
+# 수정 방향:
+#   - core/bible_utils.py의 decode_rtf()를 핵심 디코딩에 사용 (10진수 \u 정확 처리)
+#   - HTML 태그는 BeautifulSoup .get_text()로 텍스트만 추출
+#   - zlib 압축 blob 지원 유지 (Mickelson's Strong 등)
 # ===================================================================
 
 @st.cache_data(show_spinner=False)
 def get_lexicon_enhanced(db_path, search_term, index_column):
     """
-    통합 사전 검색 함수 - 6가지 형식 모두 지원
-    1. 70인역대조스트롱: 유니코드 이스케이프
-    2. Bullinger-App: 일반 텍스트 (정상)
-    3. Mickelson's Strong: zlib 압축 blob
-    4. 바이블렉스: 유니코드 이스케이프
-    5. 킹제임스스트롱: 유니코드 이스케이프
-    6. 한글스트롱: HTML + 유니코드 이스케이프
+    통합 사전 검색 함수 - 한글, 헬라어, 히브리어, 영어 모두 정상 출력
+    1. 바이블렉스 (bible.dct.twm): RTF 유니코드 10진수 -> decode_rtf()
+    2. Bullinger-App: 일반 텍스트
+    3. Mickelson's Strong: zlib 압축 blob -> 압축해제 -> decode_rtf()
+    4. 70인역, 킹제임스스트롱, 한글스트롱: RTF 유니코드 10진수 -> decode_rtf()
     """
     if not os.path.exists(db_path) or not index_column:
         return None, None
-    
+
     try:
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
-        
-        # data, data2 모두 추출
-        query = f"SELECT c.data, c.data2 FROM content c JOIN topics t ON c.topic_id = t.id WHERE t.{index_column} = ? LIMIT 1"
-        cur.execute(query, (search_term.strip(),))
-        row = cur.fetchone()
+
+        # data, data2 모두 추출 시도
+        try:
+            query = f"SELECT c.data, c.data2 FROM content c JOIN topics t ON c.topic_id = t.id WHERE t.{index_column} = ? LIMIT 1"
+            cur.execute(query, (search_term.strip(),))
+            row = cur.fetchone()
+        except Exception:
+            # data2 컬럼 없는 사전은 data만 추출
+            try:
+                query = f"SELECT c.data FROM content c JOIN topics t ON c.topic_id = t.id WHERE t.{index_column} = ? LIMIT 1"
+                cur.execute(query, (search_term.strip(),))
+                r = cur.fetchone()
+                row = (r[0], None) if r else None
+            except Exception:
+                row = None
         conn.close()
-        
+
         if not row:
             return None, None
-            
-        raw_data, blob_data = row
+
+        raw_data, blob_data = row[0], row[1] if len(row) > 1 else None
         content = ""
 
-        # === 1단계: Blob 압축 데이터 우선 처리 (Mickelson 등) ===
+        # === 1단계: zlib 압축 blob 처리 (Mickelson's Strong 등) ===
         if blob_data and isinstance(blob_data, bytes):
             try:
-                # zlib 압축 해제 시도
                 decompressed = zlib.decompress(blob_data)
                 content = decompressed.decode('utf-8', errors='ignore')
-            except:
-                # 압축 실패 시 원본 사용
+            except Exception:
                 try:
                     content = blob_data.decode('utf-8', errors='ignore')
-                except:
+                except Exception:
                     content = str(blob_data)
-        
-        # === 2단계: 일반 텍스트 데이터 처리 ===
+
+        # === 2단계: 일반 data 처리 ===
         elif raw_data:
-            content = str(raw_data)
-        
-        # === 3단계: 통합 텍스트 정제 (모든 형식 대응) ===
-        content = clean_lexicon_text_advanced(content)
-        
-        # HTML 변환
-        html_content = convert_to_html_display(content)
-        return content, html_content
-        
-    except Exception as e:
-        return None, None
+            if isinstance(raw_data, bytes):
+                content = raw_data.decode('utf-8', errors='ignore')
+            else:
+                content = str(raw_data)
 
-def clean_lexicon_text_advanced(text):
-    """
-    개선된 텍스트 정제 함수 - 모든 형식 대응
-    """
-    if not text:
-        return ""
-    
-    text = str(text)
-    
-    # === 1. RTF 제거 ===
-    # {\rtf1...} 형식 제거
-    text = re.sub(r'\{\\rtf[0-9].*?\}', '', text, flags=re.DOTALL)
-    # RTF 명령어 제거
-    text = re.sub(r'\\[a-z]+[0-9]*\s*', ' ', text)
-    text = re.sub(r'\{[^}]*\}', '', text)
-    text = text.replace('\\par', '\n').replace('\\tab', '\t')
-    
-    # === 2. 유니코드 이스케이프 복원 (바이블렉스, 70인역, 킹제임스, 한글스트롱) ===
-    # Python 문자열에 \u7936? 같은 이스케이프가 있는 경우
-    try:
-        # 방법 1: unicode_escape 디코딩
-        if '\\u' in text:
-            text = text.encode('utf-8').decode('unicode_escape', errors='ignore')
-    except:
-        pass
-    
-    try:
-        # 방법 2: 정규식으로 개별 처리
-        def unicode_replacer(match):
+        if not content:
+            return None, None
+
+        # === 3단계: HTML 우선 처리 (CWSD 등 HTML 포함 사전) ===
+        # decode_rtf() 전에 HTML을 먼저 처리해야 <grk><trn> 등 태그가 제거됨
+        # decode_rtf() 이후에는 HTML이 이스케이프되어 태그 인식 불가
+        if re.search(r'<[a-zA-Z/][^>]*>', content):
             try:
-                code = match.group(1)
-                return chr(int(code, 16))
-            except:
-                return match.group(0)
-        
-        text = re.sub(r'\\u([0-9a-fA-F]{4})', unicode_replacer, text)
-    except:
-        pass
-    
-    # === 3. HTML 태그 정리 (한글스트롱 등) ===
-    # <p>, <strong> 등을 보존하되 정리
-    try:
-        soup = BeautifulSoup(text, 'html.parser')
-        
-        # 링크 제거
-        for link in soup.find_all('a'):
-            link.unwrap()
-        
-        # 불필요한 태그 제거 (script, style)
-        for tag in soup(['script', 'style']):
-            tag.decompose()
-        
-        text = str(soup)
-    except:
-        pass
-    
-    # === 4. 깨진 물음표 제거 ===
-    # 한글/그리스어/히브리어 뒤의 불필요한 물음표
-    text = re.sub(r'([\u0590-\u05FF\u0370-\u03FF\uAC00-\uD7A3])\?', r'\1', text)
-    
-    # === 5. 공백 정리 ===
-    text = re.sub(r'\s+', ' ', text)  # 연속 공백 제거
-    text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # 줄 앞뒤 공백
-    
-    return text.strip()
+                soup = BeautifulSoup(content, 'html.parser')
+                for tag in soup(['script', 'style']):
+                    tag.decompose()
+                for br in soup.find_all(['br', 'p', 'div', 'li', 'h1', 'h2', 'h3', 'h4']):
+                    br.insert_before('\n')
+                # 비표준 태그(<grk><trn><a class=T> 등) 포함 모든 태그 제거
+                content = soup.get_text(separator='')
+            except Exception:
+                content = re.sub(r'<[^>]+>', '', content)
 
-def convert_to_html_display(text):
-    """
-    텍스트를 HTML 표시용으로 변환
-    """
-    if not text:
-        return ""
-    
-    # 이미 HTML 태그가 있으면 그대로 사용
-    if '<p>' in text or '<strong>' in text or '<div>' in text:
-        return text
-    
-    # 일반 텍스트는 줄바꿈을 <br>로 변환
-    html = text.replace('\n', '<br>')
-    
-    # 강조 표시 (예: **단어** -> <strong>단어</strong>)
-    html = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', html)
-    
-    # 번호 목록 처리 (예: 1. -> <li>)
-    html = re.sub(r'^(\d+)\.\s', r'<li>', html, flags=re.MULTILINE)
-    
-    return html
+        # === 4단계: 핵심 디코딩 - decode_rtf() 사용 ===
+        # RTF 유니코드 10진수(\u-숫자) 방식 정확 처리
+        # 한글·헬라어·히브리어 모두 올바르게 변환됨
+        plain_text = decode_rtf(content)
+
+        # === 5단계: latin-1/cp1252 인코딩 깨짐 복구 (Lxx 등) ===
+        if re.search(r'[\xe0-\xff]{2,}', plain_text):
+            try:
+                recovered = plain_text.encode('latin-1').decode('utf-8', errors='ignore')
+                before_count = len(re.findall(r'[\u0370-\u03FF\u0590-\u05FF\uAC00-\uD7A3]', plain_text))
+                after_count  = len(re.findall(r'[\u0370-\u03FF\u0590-\u05FF\uAC00-\uD7A3]', recovered))
+                if after_count > before_count:
+                    plain_text = recovered
+            except Exception:
+                pass
+
+        # === 6단계: 공백 및 깨진 물음표 정리 ===
+        plain_text = re.sub(r'([\u0590-\u05FF\u0370-\u03FF\uAC00-\uD7A3])\?', r'\1', plain_text)
+        plain_text = re.sub(r'\n{3,}', '\n\n', plain_text)
+        plain_text = plain_text.strip()
+
+        # === 7단계: HTML 표시용 변환 ===
+        html_content = plain_text.replace('\n', '<br>')
+
+        return plain_text, html_content
+
+    except Exception:
+        return None, None
 
 # ===================================================================
 # ★★★ 수정 끝 ★★★
@@ -1568,9 +1534,24 @@ with col_r:
 
                             webbrowser.open('file://' + os.path.abspath(temp_file_path))
 
+# --- 설치 가이드 ---
+st.markdown("---")
+st.subheader("📚 BibleAI 설치 가이드")
+st.info("이 프로그램은 목회자와 선교사님의 사역을 돕기 위해 설계되었습니다. 설치 및 운영법은 아래 가이드를 참조하세요.")
+_col1, _col2, _col3 = st.columns(3)
+with _col1:
+    if st.button("🪟 Windows 설치 가이드", key="guide_win"):
+        webbrowser.open_new_tab("https://bonghgoo.tistory.com/569")
+with _col2:
+    if st.button("🍎 Mac 설치 가이드", key="guide_mac"):
+        webbrowser.open_new_tab("https://bonghgoo.tistory.com/570?category=1300595")
+with _col3:
+    if st.button("🐧 Linux 설치 가이드", key="guide_linux"):
+        webbrowser.open_new_tab("https://bonghgoo.tistory.com/571?category=1300595")
+
 # 2. 중단: 지능형 명령어 입력창
 st.markdown("---")
-st.markdown("**💬 에이전트 명령어 입력 결과**")
+st.markdown("**💬 에이전트 명령어 입력/ 결과**")
 
 # 검색 히스토리 트리거 처리
 if 'trigger_search' in st.session_state and st.session_state.trigger_search:
@@ -1649,81 +1630,6 @@ if user_input:
                     </script>
                     '''
                     components.html(copy_html, height=40)
-                with col2:
-                    # View in separate browser window button (HTML/JS)
-                    unique_id = f"view_ai_new_{abs(hash(full_response))}"
-                    escaped_content = json.dumps(full_response)
-                    escaped_title = json.dumps("AI 응답")
-                    view_html = f'''
-                    <button id="{unique_id}" onclick="openSeparateViewer_{unique_id}(this, event)">🔍 보기</button>
-                    <script>
-                        function openSeparateViewer_{unique_id}(button, event) {{
-                            event.preventDefault();
-                            const content = {escaped_content};
-                            const title = {escaped_title};
-
-                            const htmlContent = `
-                            <!DOCTYPE html>
-                            <html>
-                            <head>
-                                <title>BibleAI - ${{title}}</title>
-                                <meta charset="UTF-8">
-                                <style>
-                                    body {{
-                                        font-family: Arial, sans-serif;
-                                        margin: 20px;
-                                        background-color: #1e1e1e;
-                                        color: #d4d4d4;
-                                    }}
-                                    .content {{
-                                        background-color: #2d2d30;
-                                        padding: 20px;
-                                        border-radius: 8px;
-                                        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-                                        line-height: 1.6;
-                                        white-space: pre-wrap;
-                                    }}
-                                    .controls {{
-                                        margin-bottom: 20px;
-                                    }}
-                                    button {{
-                                        background-color: #007acc;
-                                        color: white;
-                                        padding: 10px 15px;
-                                        border: none;
-                                        border-radius: 4px;
-                                        cursor: pointer;
-                                        margin-right: 10px;
-                                    }}
-                                    button:hover {{
-                                        background-color: #005a9e;
-                                    }}
-                                </style>
-                            </head>
-                            <body>
-                                <div class="controls">
-                                    <button onclick="window.print()">🖨️ 인쇄</button>
-                                    <button onclick="history.back()">🔙 뒤로가기</button>
-                                    <button onclick="window.close()">❌ 창 닫기</button>
-                                </div>
-                                <div class="content">
-                                    ${{content.replace(/\n/g, '<br>')}}
-                                </div>
-                            </body>
-                            </html>
-                            `;
-
-                            const newWindow = window.open("", "_blank", "width=900,height=850");
-                            if (newWindow) {{
-                                newWindow.document.write(htmlContent);
-                                newWindow.document.close();
-                            }} else {{
-                                alert("팝업 차단 기능이 활성화되어 있습니다. 팝업을 허용해주세요.");
-                            }}
-                        }}
-                    </script>
-                    '''
-                    components.html(view_html, height=40)
 
             except Exception as e:
                 st.error(f"Grpq 연결을 확인해 주세요: {e}")
@@ -1761,6 +1667,7 @@ if user_input:
 
             if added_count > 0:
                 st.success(f"🧺 총 {added_count}개의 검색 결과를 '{st.session_state.current_group}'에 담았습니다.")
+                st.rerun()  # [버그수정] 바구니 숫자 즉시 갱신
             else:
                 st.info("이미 모든 결과가 바구니에 담겨 있습니다.")
         else:
@@ -1952,130 +1859,9 @@ if user_input:
                 </script>
                 '''
                 components.html(copy_html, height=40)
-            with col2:
-                # View in separate browser window button (HTML/JS)
-                unique_id = f"view_ai_stored_{abs(hash(st.session_state.ai_response))}"
-                escaped_content = json.dumps(st.session_state.ai_response)
-                escaped_title = json.dumps("AI 응답")
-                view_html = f'''
-                <button id="{unique_id}" onclick="openSeparateViewer_{unique_id}(this, event)">🔍 보기</button>
-                <script>
-                    function openSeparateViewer_{unique_id}(button, event) {{
-                        event.preventDefault();
-                        const content = {escaped_content};
-                        const title = {escaped_title};
-
-                        const htmlContent = `
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <title>BibleAI - ${{title}}</title>
-                            <meta charset="UTF-8">
-                            <style>
-                                body {{
-                                    font-family: Arial, sans-serif;
-                                    margin: 20px;
-                                    background-color: #1e1e1e;
-                                    color: #d4d4d4;
-                                }}
-                                .content {{
-                                    background-color: #2d2d30;
-                                    padding: 20px;
-                                    border-radius: 8px;
-                                    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-                                    line-height: 1.6;
-                                    white-space: pre-wrap;
-                                }}
-                                .controls {{
-                                    margin-bottom: 20px;
-                                }}
-                                button {{
-                                    background-color: #007acc;
-                                    color: white;
-                                    padding: 10px 15px;
-                                    border: none;
-                                    border-radius: 4px;
-                                    cursor: pointer;
-                                    margin-right: 10px;
-                                }}
-                                button:hover {{
-                                    background-color: #005a9e;
-                                }}
-                            </style>
-                        </head>
-                        <body>
-                            <div class="controls">
-                                <button onclick="window.print()">🖨️ 인쇄</button>
-                                <button onclick="history.back()">🔙 뒤로가기</button>
-                                <button onclick="window.close()">❌ 창 닫기</button>
-                            </div>
-                            <div class="content">
-                                ${{content.replace(/\n/g, '<br>')}}
-                            </div>
-                        </body>
-                        </html>
-                        `;
-
-                        const newWindow = window.open("", "_blank", "width=900,height=850");
-                        if (newWindow) {{
-                            newWindow.document.write(htmlContent);
-                            newWindow.document.close();
-                        }} else {{
-                            alert("팝업 차단 기능이 활성화되어 있습니다. 팝업을 허용해주세요.");
-                        }}
-                    }}
-                </script>
-                '''
-                components.html(view_html, height=40)
     
     
 
-    # 3. 하단: 제어 바 (아이콘 및 상태 강조)
-    st.markdown("---")
-    ctrl_col1, ctrl_col2 = st.columns(2)
-    with ctrl_col1:
-        if st.button("🗑️ 바구니 비우기", use_container_width=True):
-            st.session_state.basket = []
-            st.toast("바구니를 비웠습니다.", icon="🧹")
+    # 하단 제어바 제거됨
 
-    with ctrl_col2:
-        # 바구니 상태에 따른 버튼 시각 효과
-        b_count = len(st.session_state.basket)
-        btn_label = f"🔥 {b_count}건 일괄 주입" if b_count > 0 else "📥 자료 대기 중"
-        if st.button(btn_label, use_container_width=True, type="primary" if b_count > 0 else "secondary"):
-            if b_count > 0:
-                # 클립보드 패키징
-                combined_text = "\n\n".join([f"[{item['file']}]\n{item['content']}" for item in st.session_state.basket])
-                try:
-                    import pyperclip
-                    pyperclip.copy(combined_text)
-                    st.success("📋 클립보드 복사 완료! Ollama 에이전트에 붙여넣으세요.")
-
-                    # 비동기 방식으로 Ollama 호출 (시스템 멈춤 방지)
-                    import subprocess
-                    subprocess.Popen(["ollama", "run", st.session_state.selected_model], shell=True)
-                except:
-                    st.error("클립보드 복사 실패. pyperclip이 설치되어 있는지 확인하세요.")
-            else:
-                st.warning("먼저 자료를 담아주세요.")
-
-# --- [수정] 하단 가이드 링크 제공 ---
-st.markdown("---")
-st.subheader("📚 BibleAI 설치 가이드")
-st.info("이 프로그램은 목회자와 선교사님의 사역을 돕기 위해 설계되었습니다. 설치 및 운영법은 아래 가이드를 참조하세요.")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.button("🪟 Windows 설치 가이드"):
-        webbrowser.open_new_tab("https://bonghgoo.tistory.com/569")
-
-with col2:
-    if st.button("🍎 Mac 설치 가이드"):
-        webbrowser.open_new_tab("https://bonghgoo.tistory.com/570?category=1300595")
-
-with col3:
-    if st.button("🐧 Linux 설치 가이드"):
-        webbrowser.open_new_tab("https://bonghgoo.tistory.com/571?category=1300595")
-
-st.caption("제작: 경인노회 신학연구원 BibleAI Team")
+st.markdown("**제작: 경인노회 (<a href='https://kinohoi.blogspot.com' target='_blank'>https://kinohoi.blogspot.com</a>) 신학연구원 BibleAI Team**", unsafe_allow_html=True)
